@@ -22,7 +22,15 @@
 <section style="margin-top:22px;border-top:1px solid #e9edf5;padding-top:16px">
 <h2 style="font-size:18px">今日记录与号码核对</h2>
 <p id="day-note" class="rule"></p>
-<details><summary>查看今日生成的号码</summary><pre id="day-list" style="white-space:pre-wrap"></pre></details>
+<details><summary>查看今日号码</summary><pre id="day-list" style="white-space:pre-wrap"></pre></details>
+<button type="button" id="toggle-import" aria-expanded="false">导入今日号码</button>
+<button type="button" id="copy-day">复制今日号码</button>
+<form id="import-day" hidden style="margin-top:10px">
+<label for="import-text">粘贴同一彩种的号码，每注一行</label>
+<textarea id="import-text" rows="5" style="width:100%;font:inherit;font-size:16px" required></textarea>
+<button type="submit">保存到今日记录</button>
+</form>
+<p id="import-status" role="status" class="rule"></p>
 <form id="check-form" style="display:grid;gap:10px;margin-top:14px">
 <label for="check-type">核对类型</label><select id="check-type"><option>正式开奖号码</option><option>开机号码</option></select>
 <label id="check-label" for="check-front"></label><div id="check-front" class="check-boxes" role="group" aria-labelledby="check-label"></div>
@@ -142,5 +150,62 @@ $('clear-check').addEventListener('click',()=>{
   for(const field of $('check-form').querySelectorAll('.check-boxes input'))field.value='';
   $('check-result').textContent='';
   $('check-front').querySelector('input')?.focus();
+});
+
+$('toggle-import').addEventListener('click',()=>{
+  const form=$('import-day');
+  form.hidden=!form.hidden;
+  $('toggle-import').setAttribute('aria-expanded',String(!form.hidden));
+  if(!form.hidden)$('import-text').focus();
+});
+$('copy-day').addEventListener('click',async()=>{
+  refreshDay();
+  if(!(records[current]||[]).length){$('import-status').textContent='这个彩种今天还没有记录。';return;}
+  const value=games[current].name+' 自选号码\n'+$('day-list').textContent;
+  try{await navigator.clipboard.writeText(value);$('import-status').textContent='已复制这个彩种的全部今日号码。';}
+  catch{
+    if($('import-day').hidden)$('toggle-import').click();
+    $('import-text').value=value;
+    $('import-text').select();
+    $('import-status').textContent='请手动复制文本框内已选中的号码。';
+  }
+});
+$('import-day').addEventListener('submit',event=>{
+  event.preventDefault();
+  refreshDay();
+  const status=$('import-status'),game=games[current];
+  const lines=$('import-text').value.trim().split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+  const header=lines[0]?.match(/^(超级大乐透|大乐透|双色球|快乐8)\s*(?:自选|随机)号码$/);
+  if(header){
+    if(header[1]!==game.name&&!(current==='dlt'&&header[1]==='大乐透')){
+      status.textContent='请先切换到粘贴内容对应的彩种。';return;
+    }
+    lines.shift();
+  }
+  if(!lines.length){status.textContent='请粘贴至少一注号码。';return;}
+  const imported=[];
+  for(const [index,line] of lines.entries()){
+    const groups=line.replace(/^(?:第\s*\d+\s*注|\d+)[.．、:：]\s*/,'').split(/[+＋]/);
+    const count=current==='kl8'?groups[0].trim().split(/[\s,，、]+/).length:game.frontCount;
+    const front=count<=10?parseDraw(groups[0],count,game.front):null;
+    const back=game.backCount&&groups.length===2?parseDraw(groups[1],game.backCount,game.back):new Set();
+    if(!front||!back||groups.length!==(game.backCount?2:1)){
+      status.textContent='第'+(index+1)+'行号码格式或数量有误，整批尚未导入。';return;
+    }
+    imported.push({front:[...front].sort((a,b)=>a-b),back:[...back].sort((a,b)=>a-b)});
+  }
+  const rows=records[current]||[];
+  const seen=new Set(rows.map(row=>row.front.join(',')+'|'+row.back.join(',')));
+  const added=imported.filter(row=>{
+    const key=row.front.join(',')+'|'+row.back.join(',');
+    if(seen.has(key))return false;
+    seen.add(key);return true;
+  });
+  records[current]=rows.concat(added);
+  try{localStorage.setItem(storageKey,JSON.stringify({day,records}));}catch{storageAvailable=false;}
+  $('check-result').textContent='';
+  refreshDay();
+  $('import-text').value='';
+  status.textContent='已导入 '+added.length+' 注，跳过 '+(imported.length-added.length)+' 注重复号码。'+(storageAvailable?'':' 浏览器无法持久保存。');
 });
 </script></body></html>
